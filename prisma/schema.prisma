@@ -1,0 +1,44 @@
+// L'URL de connexion ne figure pas ici : Prisma 7 ne l'accepte plus dans le
+// schéma. Elle est lue depuis DATABASE_URL par prisma.config.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Achat enregistré. Table en écriture seule : aucun update, aucun delete.
+/// Elle n'est qu'une projection de la chaîne, reconstructible par scripts/reconcile.ts.
+model Purchase {
+  id             String     @id @default(cuid())
+  walletAddress  String
+  lamports       BigInt
+  tokenBaseUnits BigInt
+  /// Taux appliqué au moment de l'achat. Stocké par achat : le taux peut changer
+  /// entre deux phases, un achat doit rester interprétable avec le sien.
+  tokensPerSol   BigInt
+  /// Dernier rempart contre le rejeu. Double la vérification applicative, ne la remplace pas.
+  txHash         String     @unique
+  slot           BigInt
+  blockTime      DateTime
+  affiliateCode  String?
+  /// Restrict des deux côtés : sans cela, supprimer ou renommer un affilié
+  /// ferait réécrire ces lignes par la base elle-même — un chemin d'écriture
+  /// vers une table immuable, invisible depuis le code.
+  affiliate      Affiliate? @relation(fields: [affiliateCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  createdAt      DateTime   @default(now())
+
+  @@index([walletAddress])
+  @@index([affiliateCode])
+}
+
+/// La commission n'est pas stockée : elle se calcule à partir de lamports et de
+/// la configuration. Une valeur stockée est une valeur qui peut diverger.
+model Affiliate {
+  code          String     @id
+  walletAddress String     @unique
+  createdAt     DateTime   @default(now())
+  purchases     Purchase[]
+}
