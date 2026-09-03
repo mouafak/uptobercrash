@@ -207,19 +207,45 @@ chaîne de connexion interne, puis créer l'application avec cette valeur en
 > Le symptôme est trompeur, `P1000: Authentication failed`, qui fait chercher du
 > côté des identifiants alors que c'est l'URL qui est mal découpée.
 
-**Build pack :** Railpack, le défaut de Coolify. Le choix importe peu, la
-version de Node étant épinglée par `.node-version` et `engines` — que Railpack
-lit tous deux. Avec Nixpacks il faudrait passer par `NIXPACKS_NODE_VERSION`.
+**Build pack :** Railpack, le défaut de Coolify.
 
-**Build command :**
+La version de Node est épinglée par `engines` dans `package.json`, **borne haute
+comprise** : chez Railpack `engines.node` prime sur `.node-version`, et une plage
+ouverte (`>=20.12`) se résoudrait sur la version la plus récente existante,
+quelle qu'elle soit. `.node-version` dit la même chose pour les outils locaux.
 
-```
-npx prisma generate && npx prisma migrate deploy && next build
-```
+**Deployment lifecycle : laisser les deux champs vides.**
 
-Les migrations tournent pendant le build, la base étant déjà déployée et
-joignable sur le réseau du projet. `migrate deploy` est idempotent : relancer un
-déploiement échoué est sans risque.
+*Pre-deployment* s'exécute dans le conteneur **existant**, donc l'ancienne image :
+son dossier `prisma/migrations` ne contient pas encore la migration que le
+déploiement apporte. Y mettre `prisma migrate deploy` raterait précisément
+celle-là — et au premier déploiement, il n'y a aucun conteneur existant.
+
+*Post-deployment* s'exécute bien dans le nouveau conteneur, mais **après** la
+bascule du trafic : le nouveau code servirait des requêtes contre une base non
+migrée, et une migration ratée laisserait une application déjà en ligne.
+
+Les migrations vivent donc dans le build, seul endroit qui réunit les trois
+propriétés : les nouvelles migrations sont présentes, la CLI `prisma` l'est
+aussi — c'est une dépendance de développement, absente de l'image d'exécution —,
+et un échec interrompt le déploiement **avant** toute mise en ligne.
+
+**Build command :** `npm run build:deploy`
+
+Soit `prisma generate && prisma migrate deploy && next build`. Les migrations
+tournent pendant le build, la base étant déjà déployée et joignable sur le
+réseau du projet. `migrate deploy` est idempotent : relancer un déploiement
+échoué est sans risque.
+
+> Railpack exécute par défaut le script `build`, qui ne migre pas. Surcharger la
+> *Build command* peut, selon la version de Coolify, réclamer un `railpack.json`.
+> Le cas échéant, remplacer l'étape `build` dans ce fichier plutôt que d'y
+> ajouter des commandes : l'opérateur `"..."` de Railpack les *ajoute après* les
+> commandes générées, et `prisma generate` s'exécuterait alors après
+> `next build`, trop tard.
+
+**Start command :** laisser vide. Railpack lit le script `start`, soit
+`next start`.
 
 **Variables de build.** Cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et
 `NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en nommant les deux

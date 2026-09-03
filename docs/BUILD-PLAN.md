@@ -253,12 +253,12 @@ Un projet vide qui compile.
 7. `tsconfig.json` : `"strict": true`, `"noUncheckedIndexedAccess": true`, et `"target": "ES2022"`. `create-next-app` écrit `ES2017`, sous lequel TypeScript **interdit les littéraux `BigInt`** — soit tout le socle des montants.
 8. **ESLint en Flat Config** : créer `eslint.config.mjs` important `@next/eslint-plugin-next` directement, plus `typescript-eslint` pour le parsing. **Ne pas utiliser `eslint-config-next`** : il embarque un `eslint-plugin-react` incompatible avec ESLint 10 et fait planter le lint au démarrage. Ne crée pas de `.eslintrc*`. Ne mets pas de clé `eslint` dans `next.config.ts` : l'option a été supprimée.
 9. Créer `.env.example` et `.gitignore` (vérifier que `.env*` y figure, **et ajouter `!.env.example`** — sans quoi le modèle lui-même serait ignoré et ne partirait jamais dans le dépôt).
-10. **Épingler la version de Node** : champ `engines` dans `package.json` et fichier `.node-version`. Sans cela, le constructeur d'images choisit tout seul, et rien ne garantit qu'il retienne une version ≥ 20.12.
+10. **Épingler la version de Node** : champ `engines` dans `package.json` — **avec une borne haute** — et fichier `.node-version`. Sans cela, le constructeur d'images choisit tout seul. Et une plage ouverte ne suffit pas : Railpack fait primer `engines.node` sur `.node-version`, et résoudrait `>=20.12` sur la version la plus récente existante.
 11. Scripts `package.json` :
 
 ```json
 "dev": "next dev",
-"build": "next build",
+"build": "prisma generate && next build",
 "build:deploy": "prisma generate && prisma migrate deploy && next build",
 "start": "next start",
 "lint": "eslint .",
@@ -855,7 +855,7 @@ Mettre en ligne sur un serveur géré par **Coolify**, avec de quoi diagnostique
    - déployer d'abord le **service PostgreSQL**, récupérer sa chaîne de connexion interne ; l'inverse échoue, l'application ne trouverait pas sa base ;
    - vérifier que le mot de passe généré ne contient aucun caractère réservé d'URL — `@` devient `%40`. Le symptôme est trompeur : `P1000: Authentication failed` fait chercher du côté des identifiants alors que c'est l'URL qui est mal découpée ;
    - *Build pack* : **Railpack**, le défaut de Coolify et son successeur maintenu de Nixpacks — images plus petites, cache de couches plus fin. Le choix importe peu dès lors que la version de Node est épinglée par `engines` et `.node-version`, que Railpack lit tous deux ; avec Nixpacks il faudrait la variable `NIXPACKS_NODE_VERSION` ;
-   - *Build command* : `npx prisma generate && npx prisma migrate deploy && next build`. Les migrations tournent pendant le build, la base étant déjà déployée et joignable sur le réseau du projet. `migrate deploy` étant idempotent, relancer un déploiement échoué est sans risque ;
+   - *Build command* : `npm run build:deploy`. Les migrations tournent pendant le build, la base étant déjà déployée et joignable sur le réseau du projet. `migrate deploy` étant idempotent, relancer un déploiement échoué est sans risque. **Laisser les deux champs de *Deployment lifecycle* vides** : *Pre-deployment* s'exécute dans le conteneur existant, dont le dossier `prisma/migrations` ne contient pas encore la migration qu'on apporte ; *Post-deployment* s'exécute après la bascule du trafic, donc trop tard. Le build est le seul endroit où les nouvelles migrations, la CLI `prisma` et un échec bloquant coexistent ;
    - cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et `NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en les nommant — bruyant, mais bloquant. Corollaire durable : ces deux valeurs sont gravées dans le bundle, en changer une impose un *Redeploy* et non un simple *Restart* ;
    - Traefik et le certificat TLS sont gérés par Coolify, aucune configuration de proxy à écrire. Mais **Traefik *ajoute* l'IP réelle à `X-Forwarded-For` sans effacer ce que le client a envoyé** : lire le premier segment revient à lire ce que l'attaquant a bien voulu écrire. D'où `TRUSTED_PROXY_HOPS=1`, qui fait lire en partant de la fin. Sans cela, la limitation de débit se contourne en une ligne de `curl`.
 
