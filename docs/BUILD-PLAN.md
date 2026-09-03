@@ -94,7 +94,13 @@ Cette application ne signe rien. La trésorerie est une simple adresse de récep
 | `lucide-react`                 | 1               | 1.39.0                |
 | `eslint`                       | 10              | 10.9.1                |
 | `vitest`                       | 4               | 4.1.11                |
-| `typescript`                   | 5.9 ou 7        | 7.0.2                 |
+| `typescript`                   | 5.9             | 5.9.3                 |
+| `@dynamic-labs/solana`         | 5               | 5.6.1                 |
+| `@prisma/adapter-pg`           | 7               | 7.10.0                |
+| `@prisma/config`               | 7               | 7.10.0                |
+| `@next/eslint-plugin-next`     | 16              | 16.3.4                |
+| `typescript-eslint`            | 8               | 8.69.0                |
+| `tsx`                          | 4               | 4.23.13               |
 
 Détails et pièges :
 
@@ -110,9 +116,34 @@ Détails et pièges :
   exemples v3 trouvés dans tes données d'entraînement.
 - **`@solana/web3.js` en 1.x.** Le successeur `@solana/kit` existe, mais le SDK
   Dynamic s'appuie sur la 1.x : ne mélange pas les deux.
-- **TypeScript** : la 7.x est publiée sous le tag `latest`. Si un outil de la
-  chaîne (parser ESLint, générateur Prisma) refuse de fonctionner avec, retombe
-  sur la dernière 5.9 et signale-le-moi.
+- **TypeScript 5.9, pas 7.** La 7.x est publiée sous le tag `latest`, mais
+  `typescript-eslint` la refuse explicitement (« does not support TS 7.0 »,
+  support attendu pour TS ≥ 7.1). Le repli sur 5.9.3 n'est pas un choix de
+  confort : sans lui `npm run lint` ne démarre pas. À réévaluer quand
+  `typescript-eslint` rattrapera.
+- **`eslint-config-next` n'est pas utilisable avec ESLint 10.** Il embarque une
+  version d'`eslint-plugin-react` qui appelle `context.getFilename()`, supprimé
+  dans ESLint 10. Ne l'installe pas : branche `@next/eslint-plugin-next`
+  directement, avec `typescript-eslint` pour le parsing.
+- **`@dynamic-labs/solana` est obligatoire.** `SolanaWalletConnectors` n'existe
+  dans aucun autre paquet Dynamic.
+- **Prisma 7 exige un adaptateur de pilote.** `new PrismaClient()` sans `adapter`
+  refuse de se connecter : il faut `@prisma/adapter-pg`. Et `@prisma/config`,
+  qu'importe `prisma.config.ts`.
+- **Cinq copies imbriquées de `@solana/web3.js`** arrivent avec le SDK Dynamic,
+  en 1.98.1. Elles produisent des types `Transaction` nominalement incompatibles
+  et doublent le poids du bundle client. À effondrer par un `overrides` dans
+  `package.json` :
+
+  ```json
+  "overrides": { "@solana/web3.js": "$@solana/web3.js" }
+  ```
+
+- **npm 11.19 bloque les scripts d'installation.** Quatre sont nécessaires —
+  `@prisma/engines`, `prisma`, `esbuild`, `unrs-resolver` — et s'autorisent par
+  `npm install-scripts approve <pkg>`, qui les inscrit dans le champ
+  `allowScripts` de `package.json`. Sans eux, `prisma generate` échoue en
+  production.
 - **shadcn/ui** sur Radix — uniquement `button`, `input`, `label`, `separator`,
   `drawer`, `sonner`.
 - Tailwind v4 via `@tailwindcss/postcss`, sans fichier `tailwind.config`.
@@ -151,6 +182,10 @@ lib/
     affiliate.ts
   format.ts                 # unités de base -> affichage
   utils.ts                  # cn()
+  http.ts                   # codes d'erreur -> statuts HTTP, enveloppe Result
+  rate-limit.ts             # limitation de débit, extraction de l'IP client
+  monitoring.ts             # journalisation structurée et alertes
+  providers.tsx             # DynamicContextProvider
 app/
   layout.tsx
   page.tsx
@@ -177,15 +212,20 @@ components/
     disconnect-button.tsx
     countdown.tsx
     copy-button.tsx
-    brand-logo.tsx
+    brand-logo.tsx            # seul fichier référençant le logo du projet
+    solana-mark.tsx           # seul fichier référençant le logo Solana
+    sale-paused-banner.tsx
   ui/
 context/
   sale-provider.tsx
 scripts/
   reconcile.ts
+  load-env.ts               # charge .env avant tout autre import
 prisma/
   schema.prisma
 prisma.ts
+prisma.config.ts            # imposé par Prisma 7 : porte l'URL de connexion
+vitest.config.mts           # alias @/ ; .mts car tsx charge les .ts en CJS
 ```
 
 Nommage : **kebab-case pour tous les fichiers**. Un composant par fichier, export par défaut.
@@ -202,12 +242,12 @@ Un projet vide qui compile.
 
 1. Vérifier `node -v` ≥ 20.9. Sinon, s'arrêter et me le signaler.
 2. `npx create-next-app@latest` : TypeScript oui, Tailwind oui, App Router oui, `src/` **non**, alias d'import `@/*` oui. Vérifier que `next` installé est bien en 16.x.
-3. **Mettre en place la documentation d'agent** : `npx @next/codemod@canary agents-md`. Cela crée un `AGENTS.md` pointant vers `node_modules/next/dist/docs/`, c'est-à-dire la documentation de la version exactement installée. Lis-la avant d'écrire du code Next.
+3. **Mettre en place la documentation d'agent** : le drapeau `--agents-md` de `create-next-app` s'en charge nativement, le codemod n'est plus nécessaire. Cela crée un `AGENTS.md` pointant vers `node_modules/next/dist/docs/`, c'est-à-dire la documentation de la version exactement installée. Lis-la avant d'écrire du code Next.
 4. Supprimer tout le contenu de démonstration : le `page.tsx` par défaut, les SVG de `/public`, le CSS d'exemple dans `globals.css`.
-5. Installer les dépendances listées dans la section Stack.
+5. Installer les dépendances listées dans la section Stack. npm 11.19 bloquant les scripts d'installation, autoriser les quatre nécessaires : `npm install-scripts approve @prisma/engines prisma esbuild unrs-resolver`, puis relancer `npm install`. Sans quoi Prisma n'aura pas ses binaires.
 6. Initialiser shadcn (`npx shadcn@latest init`) et ajouter uniquement les six composants listés.
-7. `tsconfig.json` : `"strict": true`, `"noUncheckedIndexedAccess": true`.
-8. **ESLint en Flat Config** : créer `eslint.config.mjs` important `@next/eslint-plugin-next`. Ne crée pas de `.eslintrc*`. Ne mets pas de clé `eslint` dans `next.config.ts` : l'option a été supprimée.
+7. `tsconfig.json` : `"strict": true`, `"noUncheckedIndexedAccess": true`, et `"target": "ES2022"`. `create-next-app` écrit `ES2017`, sous lequel TypeScript **interdit les littéraux `BigInt`** — soit tout le socle des montants.
+8. **ESLint en Flat Config** : créer `eslint.config.mjs` important `@next/eslint-plugin-next` directement, plus `typescript-eslint` pour le parsing. **Ne pas utiliser `eslint-config-next`** : il embarque un `eslint-plugin-react` incompatible avec ESLint 10 et fait planter le lint au démarrage. Ne crée pas de `.eslintrc*`. Ne mets pas de clé `eslint` dans `next.config.ts` : l'option a été supprimée.
 9. Créer `.env.example` et `.gitignore` (vérifier que `.env*` y figure).
 10. Scripts `package.json` :
 
@@ -267,15 +307,24 @@ Le taux et les seuils sont des `BigInt` en unités de base, pas des nombres déc
 **`config/env.ts`** — schéma zod validé **une seule fois à l'import du module**, exportant un objet typé. Variables attendues :
 
 ```
-DATABASE_URL
-SOLANA_RPC_URL
-NEXT_PUBLIC_DYNAMIC_ENV_ID
-NEXT_PUBLIC_TREASURY_ADDRESS
+DATABASE_URL                  obligatoire
+SOLANA_RPC_URL                obligatoire
+NEXT_PUBLIC_DYNAMIC_ENV_ID    obligatoire
+NEXT_PUBLIC_TREASURY_ADDRESS  obligatoire
+SALE_PAUSED                   optionnelle, défaut false   (étape 12)
+ALERT_WEBHOOK_URL             optionnelle                 (étape 12)
+TRUSTED_PROXY_HOPS            optionnelle, défaut 1       (étape 12)
 ```
 
 Si une variable manque, le module lève une erreur au démarrage du serveur avec un message nommant explicitement la variable. **Ne jamais lever d'erreur pendant le rendu d'un composant** : une variable absente ne doit pas produire une page blanche.
 
 Séparer clairement les variables publiques (`NEXT_PUBLIC_*`) des variables serveur, dans deux objets distincts.
+
+Trois pièges, tous rencontrés :
+
+- Une variable **présente mais vide** — ce que produit un `.env.example` recopié tel quel — n'est pas `undefined`. Sans normalisation, `ALERT_WEBHOOK_URL=` fait échouer le démarrage alors qu'elle est facultative.
+- L'objet des variables serveur ne doit **pas** être évalué dans le navigateur. Un composant client important la configuration publique chargerait le même module ; y valider `DATABASE_URL`, absente côté navigateur, produirait exactement la page blanche que cette étape interdit.
+- Chaque `process.env.NEXT_PUBLIC_*` doit être référencé **littéralement**. Un accès dynamique n'est pas remplacé à la compilation, et la valeur sera `undefined` en production.
 
 ## Règles
 
@@ -361,7 +410,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Purchase {
@@ -374,7 +422,7 @@ model Purchase {
   slot           BigInt
   blockTime      DateTime
   affiliateCode  String?
-  affiliate      Affiliate? @relation(fields: [affiliateCode], references: [code])
+  affiliate      Affiliate? @relation(fields: [affiliateCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
   createdAt      DateTime @default(now())
 
   @@index([walletAddress])
@@ -391,13 +439,25 @@ model Affiliate {
 
 ## Points de conception à respecter
 
-- **`Purchase` est immuable.** Aucune fonction du code ne doit contenir `purchase.update` ou `purchase.delete`.
+- **`Purchase` est immuable.** Aucune fonction du code ne doit contenir `purchase.update` ou `purchase.delete`. Et la clé étrangère doit être en **`Restrict` des deux côtés** : le défaut de Prisma est `onDelete: SetNull, onUpdate: Cascade`, ce qui laisse la base réécrire elle-même des lignes d'achat quand un affilié est supprimé ou renommé. C'est un chemin d'écriture vers une table close, invisible à toute recherche dans le code.
 - `txHash @unique` : la contrainte d'unicité en base est le rempart final contre le rejeu. Elle ne remplace pas la vérification applicative, elle la double.
 - `tokensPerSol` est stocké **sur chaque achat**. Le taux peut changer entre deux phases ; un achat doit rester interprétable avec le taux qui s'appliquait au moment où il a eu lieu.
 - `slot` et `blockTime` viennent de la chaîne. Ils permettent au script de réconciliation de repartir d'un point connu.
 - La commission d'affiliation **n'est pas stockée**. C'est un calcul dérivé de `lamports` et de la configuration. Une valeur stockée est une valeur qui peut diverger.
 
-Générer la migration initiale.
+**Prisma 7 refuse `url` dans le schéma.** La chaîne de connexion vit désormais dans `prisma.config.ts`, à la racine :
+
+```ts
+import { defineConfig, env } from '@prisma/config';
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  datasource: { url: env('DATABASE_URL') },
+});
+```
+
+Prisma 7 ne charge plus `.env` tout seul non plus : le faire dans ce fichier, avec `process.loadEnvFile()`, natif depuis Node 20.12 — et sous condition d'existence, le fichier étant absent en production.
+
+Générer la migration initiale. Le drapeau de `migrate diff` s'appelle `--to-schema`, plus `--to-schema-datamodel`.
 
 ## Critère de validation
 
@@ -451,7 +511,7 @@ Isoler tous les accès Prisma. Aucun autre fichier n'importe `prisma` directemen
 
 ## Fichiers
 
-**`prisma.ts`** — singleton habituel avec cache sur `globalThis` en développement.
+**`prisma.ts`** — singleton habituel avec cache sur `globalThis` en développement. **Prisma 7 impose un adaptateur de pilote** : `new PrismaClient({ adapter: new PrismaPg({ connectionString: … }) })`, faute de quoi le client refuse de se connecter.
 
 **`lib/db/purchase.ts`**
 
@@ -506,7 +566,9 @@ Séquence :
 
 Le montant, l'adresse de l'acheteur et le destinataire ne viennent jamais du corps de la requête. Ils sont extraits de la chaîne à l'étape 4.
 
-Ajouter une limitation de débit simple en mémoire : dix requêtes par minute et par IP. Sur un VPS mono-instance, une `Map` suffit ; pas besoin de Redis.
+Ajouter une limitation de débit simple en mémoire : dix requêtes par minute et par IP. Sur une instance unique — un conteneur Coolify en est une — une `Map` suffit ; pas besoin de Redis. Elle ne survit pas à un redémarrage et ne se partage pas entre processus : c'est assumé, le but est de freiner un script, pas de tenir un quota comptable.
+
+Attention à l'extraction de l'IP : `request.ip` n'existe plus en Next 16, et `X-Forwarded-For` est une **liste** à laquelle les proxys ajoutent leur vision de l'appelant sans effacer ce qui précède. Le début de la liste est écrit par le client. Voir `TRUSTED_PROXY_HOPS` à l'étape 12.
 
 ## `POST /api/affiliate`
 
@@ -531,6 +593,10 @@ Ces fonctions ne modifient rien et ne prennent aucune décision métier.
 - Toutes les réponses suivent le type `Result` de `core/errors.ts`.
 - Aucun bloc `catch` vide. Aucun `console.log(error)` seul : toute erreur est journalisée avec son contexte et retournée avec un code.
 - Sérialiser les `BigInt` explicitement en chaîne dans les réponses JSON — `JSON.stringify` ne sait pas les traiter.
+- La correspondance code d'erreur → statut HTTP et l'enveloppe `Result` vivent dans `lib/http.ts`, partagés par les deux routes. La table doit être un `Record<ErrorCode, number>` **exhaustif** : ajouter un code sans lui donner de statut casse alors la compilation, plutôt que de partir silencieusement en 200.
+- La limitation de débit et l'extraction de l'IP client vivent dans `lib/rate-limit.ts`, et s'appliquent aux **deux** routes d'écriture.
+- Envelopper chaque route dans un `try/catch` de dernier recours : une exception inattendue doit sortir en `Result` journalisé, pas en trace Next brute.
+- L'union `ErrorCode` grandit au fil des étapes. C'est normal ; ce qui ne l'est pas, c'est un message d'erreur en chaîne libre.
 
 ## Critère de validation
 
@@ -658,7 +724,7 @@ Les briques visuelles. Aucune ne contient de logique métier.
 - Champ `type="number"`, `inputMode="decimal"`, flèches natives masquées, taille de police très grande.
 - Filtre de saisie par expression régulière : chiffres, un point, quatre décimales maximum.
 - Message d'erreur en 11 px sous le champ, en `--destructive`, avec une hauteur réservée pour éviter que la mise en page ne saute à l'apparition du message.
-- Pastille du logo Solana à droite.
+- Pastille du logo Solana à droite. Ce logo n'est pas celui du projet : il vit dans `components/shared/solana-mark.tsx`, distinct de `brand-logo.tsx`. La règle « une image, un seul point de référence » vaut pour chacun des deux.
 - Désactivé tant que le wallet n'est pas connecté.
 
 **`token-output.tsx`** — même gabarit, non éditable. « You get » et le montant formaté. Au-delà d'un million, utiliser le format compact.
@@ -744,10 +810,12 @@ Exécutable en ligne de commande via `npm run reconcile`.
 
 1. Récupérer le `slot` le plus élevé présent en base, ou zéro si la table est vide.
 2. `getSignaturesForAddress(TREASURY_ADDRESS)` en paginant jusqu'à atteindre ce slot.
-3. Pour chaque signature absente de la base, exécuter `verifyPurchase` puis `insertPurchase`.
+3. Pour chaque signature absente de la base, exécuter `verifyPurchase`, puis **appliquer les mêmes règles que la route d'achat** — `isAmountValid`, et `isSaleOpen` évalué à l'horodatage du bloc et non à l'instant présent — avant `insertPurchase`. Sans ces deux filtres, un virement hors bornes ou postérieur à la clôture serait crédité ici alors que l'API l'aurait refusé, et l'affirmation « `--from-scratch` reproduit la base » deviendrait fausse. Compter ces cas séparément dans le résumé : rien ne doit être écarté en silence.
 4. Afficher un résumé : nombre de signatures examinées, insérées, ignorées, en erreur.
 
 Le script doit être **idempotent** : deux exécutions consécutives ne produisent aucun doublon, la contrainte d'unicité s'en chargeant.
+
+`tsx` charge les `.ts` en CommonJS, qui refuse l'`await` de premier niveau, et `config/env.ts` valide ses variables dès son import. Il faut donc charger `.env` **avant tout autre import** : un module `scripts/load-env.ts` de trois lignes, placé en premier import de `reconcile.ts`. Les imports étant hissés, l'ordre du fichier est le seul garant de l'ordre d'évaluation.
 
 Il doit aussi accepter un mode `--from-scratch` reconstruisant toute la table depuis le premier bloc. C'est le test de l'affirmation « la chaîne est la source de vérité ». Si ce mode ne reproduit pas exactement la base existante, quelque chose est mal conçu.
 
@@ -755,7 +823,9 @@ Attention : ce script ne peut pas restaurer les codes d'affiliation, qui n'exist
 
 ## Critère de validation
 
-Supprimer manuellement une ligne d'achat, exécuter le script, la ligne est restaurée à l'identique hors code d'affiliation.
+Supprimer manuellement une ligne d'achat, exécuter le script, la ligne est restaurée à l'identique hors code d'affiliation — le `id` mis à part, clé de substitution absente de la chaîne et donc irrécupérable par nature.
+
+Supprimer une ligne **ancienne**, pas la dernière : le mode incrémental repart du slot le plus élevé présent en base, et un trou antérieur à ce slot lui est structurellement invisible. C'est `--from-scratch` qui le retrouve. Cette limite doit figurer dans le README, à côté de celle sur les codes d'affiliation.
 
 ---
 
@@ -763,21 +833,37 @@ Supprimer manuellement une ligne d'achat, exécuter le script, la ligne est rest
 
 ## Objectif
 
-Mettre en ligne sur un VPS, avec de quoi diagnostiquer un incident.
+Mettre en ligne sur un serveur géré par **Coolify**, avec de quoi diagnostiquer un incident.
 
 ## Actions
 
-1. **Journalisation** : chaque appel à `POST /api/purchases` produit une ligne structurée (signature, wallet, lamports, résultat). C'est la trace exploitable en cas de litige.
-2. **Alertes** : un webhook Discord ou Telegram déclenché sur chaque échec de vérification et chaque erreur `500`. Dix lignes de code, et l'incident se découvre en deux minutes au lieu de deux jours.
-3. **Interrupteur de pause** : une variable d'environnement `SALE_PAUSED` qui, à `true`, désactive les achats et affiche une bannière. Permet d'arrêter l'hémorragie sans redéployer, à 23 h un samedi.
-4. **Déploiement** : `npm run build:deploy`, service géré par PM2 ou systemd, Nginx en proxy inverse avec certificat TLS.
-5. **Sauvegarde** : `pg_dump` quotidien vers un stockage distant. Même si la base est reconstructible, une restauration prend deux minutes contre une réconciliation complète en dix.
-6. **RPC dédié** : Helius ou QuickNode. L'endpoint public de Solana limite `getParsedTransaction` et fera échouer des vérifications légitimes en période de charge.
-7. **README** : installation, variables d'environnement, procédure de réconciliation, procédure de pause, et procédure de changement de thème pour le projet suivant.
+1. **Journalisation** : chaque appel aux **deux** routes d'écriture produit une ligne JSON structurée — horodatage, portée, IP, signature, portefeuille, montant, résultat. C'est la trace exploitable en cas de litige. Coolify l'expose dans *Runtime Logs*.
+
+2. **Alertes** : un webhook Discord ou Telegram déclenché sur chaque échec de vérification et chaque erreur `500`. Appel en « lance et oublie » : un service d'alerte injoignable ne doit pas transformer un incident en panne. À ne pas confondre avec les *Webhooks* de Coolify, qui signalent les échecs de **déploiement** — deux pannes différentes, deux canaux.
+
+3. **Interrupteur de pause** : `SALE_PAUSED=true` désactive les achats et affiche une bannière. Un **Restart** suffit — la variable n'est pas préfixée `NEXT_PUBLIC_`, donc lue au démarrage et non compilée dans le bundle. Permet d'arrêter l'hémorragie à 23 h un samedi.
+
+   Un achat payé pendant la pause n'est pas perdu : la transaction existe sur la chaîne, et la réconciliation l'enregistrera — elle ne tient délibérément pas compte de l'interrupteur. L'argent est arrivé, il doit être crédité.
+
+4. **Déploiement Coolify**, dans cet ordre impératif :
+
+   - déployer d'abord le **service PostgreSQL**, récupérer sa chaîne de connexion interne ; l'inverse échoue, l'application ne trouverait pas sa base ;
+   - vérifier que le mot de passe généré ne contient aucun caractère réservé d'URL — `@` devient `%40`. Le symptôme est trompeur : `P1000: Authentication failed` fait chercher du côté des identifiants alors que c'est l'URL qui est mal découpée ;
+   - *Build command* : `npx prisma generate && npx prisma migrate deploy && next build`. Les migrations tournent pendant le build, la base étant déjà déployée et joignable sur le réseau du projet. `migrate deploy` étant idempotent, relancer un déploiement échoué est sans risque ;
+   - cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et `NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en les nommant — bruyant, mais bloquant. Corollaire durable : ces deux valeurs sont gravées dans le bundle, en changer une impose un *Redeploy* et non un simple *Restart* ;
+   - Traefik et le certificat TLS sont gérés par Coolify, aucune configuration de proxy à écrire. Mais **Traefik *ajoute* l'IP réelle à `X-Forwarded-For` sans effacer ce que le client a envoyé** : lire le premier segment revient à lire ce que l'attaquant a bien voulu écrire. D'où `TRUSTED_PROXY_HOPS=1`, qui fait lire en partant de la fin. Sans cela, la limitation de débit se contourne en une ligne de `curl`.
+
+5. **Sauvegarde** : *Backups* sur le service PostgreSQL — quotidien, rétention d'au moins trente jours, et une **destination distante** ; une sauvegarde stockée sur la machine sauvegardée n'en est pas une. Même si la base est reconstructible depuis la chaîne, une restauration prend deux minutes contre dix pour une réconciliation complète — et elle restitue les codes de parrainage, que la réconciliation ne peut pas retrouver.
+
+6. **RPC dédié** : Helius, QuickNode ou Chainstack. L'endpoint public de Solana limite `getParsedTransaction` et fera échouer des vérifications légitimes en période de charge.
+
+7. **Réconciliation planifiée** : *Scheduled Tasks* → commande `npm run reconcile`, fréquence `0 3 * * *`. Le nom d'hôte de la base fourni par Coolify n'étant résoluble que depuis le réseau Docker de l'application, le script ne peut pas être lancé depuis l'extérieur : il doit tourner *dans* le conteneur. Pour le ponctuel, le **Terminal** de Coolify.
+
+8. **README** : installation, variables d'environnement, procédure de réconciliation, procédure de pause, et procédure de changement de thème pour le projet suivant.
 
 ## Critère de validation
 
-`SALE_PAUSED=true` suivi d'un redémarrage désactive effectivement les achats. Une erreur volontaire déclenche bien l'alerte.
+`SALE_PAUSED=true` suivi d'un *Restart* désactive effectivement les achats et affiche la bannière. Une erreur volontaire déclenche bien l'alerte. **Une IP falsifiée dans `X-Forwarded-For` ne contourne pas la limitation de débit** — c'est le seul des trois qui échoue en silence, donc le seul qu'il faut éprouver avec un `curl` forgé plutôt que constater.
 
 ---
 
@@ -808,7 +894,7 @@ Mettre en ligne sur un VPS, avec de quoi diagnostiquer un incident.
 13. Aucun composant ne calcule un montant
 14. Aucune valeur métier hors de `config/project.ts`
 15. Aucune couleur en dur dans le JSX
-16. Le logo n'est référencé que dans `brand-logo.tsx`
+16. Chaque image n'est référencée qu'en un seul endroit : le logo du projet dans `brand-logo.tsx`, celui de Solana dans `solana-mark.tsx`
 
 ## Interface
 

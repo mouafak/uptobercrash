@@ -26,6 +26,18 @@ const serverSchema = z.object({
     .transform((value) => value === 'true'),
   /** Webhook Discord ou Telegram. Absent, les alertes sont simplement muettes. */
   ALERT_WEBHOOK_URL: z.url({ error: 'URL invalide' }).optional(),
+  /**
+   * Nombre de proxys de confiance devant l'application.
+   *
+   * 1 pour un Traefik ou un Nginx en frontal. 2 si un CDN s'intercale. Sert à
+   * savoir quel segment de `X-Forwarded-For` est écrit par un proxy — les
+   * précédents sont fournis par le client et donc falsifiables.
+   */
+  TRUSTED_PROXY_HOPS: z.coerce
+    .number({ error: 'doit être un entier' })
+    .int({ error: 'doit être un entier' })
+    .min(1, { error: 'doit valoir au moins 1' })
+    .default(1),
 });
 
 const publicSchema = z.object({
@@ -96,6 +108,7 @@ export const serverEnv: ServerEnv =
           // dans un .env doit retomber sur le défaut, pas faire échouer.
           SALE_PAUSED: blankToUndefined(process.env.SALE_PAUSED),
           ALERT_WEBHOOK_URL: blankToUndefined(process.env.ALERT_WEBHOOK_URL),
+          TRUSTED_PROXY_HOPS: blankToUndefined(process.env.TRUSTED_PROXY_HOPS),
         },
         'serveur',
       )

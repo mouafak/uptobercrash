@@ -6,7 +6,10 @@ l'expéditeur. La base de données n'est qu'un **index** de ce qui existe sur la
 chaîne : elle se reconstruit intégralement à partir de la seule adresse de
 trésorerie.
 
-## Installation
+## Installation locale
+
+Pour la mise en production, voir [Déploiement](#déploiement) — l'application est
+déployée par Coolify, cette section décrit une installation sur machine.
 
 Node.js 20.9 minimum, PostgreSQL, et un endpoint RPC Solana dédié.
 
@@ -35,9 +38,33 @@ En développement : `npm run dev`.
 | `NEXT_PUBLIC_TREASURY_ADDRESS` | oui | Adresse de réception, en base58. |
 | `SALE_PAUSED` | non | `true` coupe les achats. Défaut `false`. |
 | `ALERT_WEBHOOK_URL` | non | Webhook Discord ou Telegram. Absent, les alertes sont muettes. |
+| `TRUSTED_PROXY_HOPS` | non | Nombre de proxys de confiance en frontal. Défaut `1`. Voir ci-dessous. |
 
 Une variable manquante fait échouer le démarrage avec un message qui la nomme,
 plutôt qu'un `undefined` découvert trois couches plus bas.
+
+### `TRUSTED_PROXY_HOPS` — à ne pas régler au hasard
+
+`X-Forwarded-For` est une **liste**, et les proxys y *ajoutent* leur vision de
+l'appelant sans effacer ce qui précède. Le début de la liste est donc écrit par
+le client : le lire reviendrait à laisser n'importe qui se fabriquer une IP
+différente à chaque requête et effacer toute limitation de débit.
+
+On lit donc en partant de la fin. Compte le nombre de proxys que la requête
+traverse avant d'atteindre l'application :
+
+| Topologie | Valeur |
+| --- | --- |
+| Traefik (Coolify) ou Nginx en frontal | `1` |
+| Cloudflare ou autre CDN devant le proxy | `2` |
+| Aucun proxy, accès direct | sans objet, l'en-tête est absent |
+
+Pour trancher : `dig +short <domaine>`. Si les IP retournées sont celles du
+serveur, c'est `1`. Si ce sont celles d'un CDN, c'est `2`.
+
+Une valeur trop grande n'ouvre aucune faille — la lecture retombe sur le dernier
+segment, toujours écrit par le proxy le plus proche. Une valeur trop petite, en
+revanche, fait partager un même compteur à tous les visiteurs.
 
 **Aucune variable ne contient de clé privée, et aucune ne doit en contenir.**
 Cette application ne signe rien : la trésorerie est une simple adresse de
@@ -48,14 +75,16 @@ impose de reconstruire, pas seulement de redémarrer.
 
 ## Procédure de pause
 
-Pour arrêter les achats sans redéployer :
+Pour arrêter les achats sans redéployer, depuis Coolify :
 
-```bash
-sed -i 's/^SALE_PAUSED=.*/SALE_PAUSED=true/' .env
-pm2 restart uptober-crash
-```
+1. **Environment Variables** → passer `SALE_PAUSED` à `true`
+2. **Restart** (pas *Redeploy* : inutile de reconstruire)
 
-Effet immédiat : la route `POST /api/purchases` répond `503 SALE_PAUSED`, et une
+Compter une dizaine de secondes. `SALE_PAUSED` n'est pas préfixée
+`NEXT_PUBLIC_`, elle est donc lue au démarrage du serveur et non gravée dans le
+bundle — un redémarrage suffit.
+
+Effet : la route `POST /api/purchases` répond `503 SALE_PAUSED`, et une
 bannière s'affiche en tête de page. Revenir à `false` et redémarrer pour
 reprendre.
 
@@ -92,6 +121,18 @@ restauration de sauvegarde, ou en contrôle périodique. S'il insère quoi que c
 soit alors que rien n'a été perdu, c'est qu'un achat est passé à travers l'API —
 regarder les journaux à cette date.
 
+**Où le lancer.** Le nom d'hôte de la base fourni par Coolify n'est résoluble
+que depuis le réseau Docker de l'application : le script doit donc tourner
+*dans* le conteneur, pas depuis ta machine.
+
+- ponctuellement : **Terminal** dans la barre latérale Coolify, puis
+  `npm run reconcile`
+- automatiquement : **Scheduled Tasks** → commande `npm run reconcile`,
+  fréquence `0 3 * * *` (chaque nuit à 3 h)
+
+Le script étant idempotent, une exécution quotidienne ne coûte rien et rattrape
+tout achat qu'un incident réseau aurait fait manquer à l'API.
+
 ## Changement de thème pour le projet suivant
 
 Toute l'identité visuelle tient dans trois endroits.
@@ -121,8 +162,13 @@ Chaque appel aux routes d'écriture produit une ligne JSON sur la sortie
 standard : horodatage, portée, IP, signature, portefeuille, montant, résultat.
 C'est la trace exploitable en cas de litige.
 
-```bash
-pm2 logs uptober-crash --lines 200 | grep api/purchases
+Coolify les expose dans **Runtime Logs**. Le champ `result` porte l'issue :
+`RECORDED`, `ALREADY_RECORDED`, `TX_NOT_FOUND`, `SALE_PAUSED`, `RATE_LIMITED`…
+
+```
+{"ts":"2026-09-03T09:12:44.108Z","level":"info","scope":"api/purchases",
+ "ip":"203.0.113.7","txHash":"3ksVhRw…","walletAddress":"3e8wH72F…",
+ "lamports":"1000000000","result":"RECORDED"}
 ```
 
 ### Alertes
@@ -132,57 +178,66 @@ on-chain et à chaque erreur 500. Le webhook est appelé sans attendre sa
 réponse : un service d'alerte injoignable ne peut pas transformer un incident en
 panne.
 
+À ne pas confondre avec les **Webhooks** de Coolify, qui signalent les échecs de
+*déploiement*. Les deux sont utiles et ne couvrent pas les mêmes pannes.
+
 ### Sauvegarde
 
-Même si la base est reconstructible, une restauration prend deux minutes contre
-dix pour une réconciliation complète.
+Le service PostgreSQL de Coolify gère ses propres sauvegardes : **Backups** dans
+la barre latérale du service base de données. Configurer une exécution
+quotidienne, une rétention d'au moins trente jours, et surtout une **destination
+distante** (S3) — une sauvegarde stockée sur la machine sauvegardée n'est pas
+une sauvegarde.
 
-```bash
-# /etc/cron.daily/uptober-backup
-#!/bin/sh
-set -eu
-STAMP=$(date -u +%Y%m%d)
-pg_dump "$DATABASE_URL" | gzip > "/var/backups/uptober-$STAMP.sql.gz"
-find /var/backups -name 'uptober-*.sql.gz' -mtime +30 -delete
-```
-
-Copier ensuite vers un stockage distant : une sauvegarde sur la machine
-sauvegardée n'est pas une sauvegarde.
+Même si la base est reconstructible depuis la chaîne, une restauration prend
+deux minutes contre dix pour une réconciliation complète. Et elle restitue les
+codes de parrainage, que la réconciliation ne peut pas retrouver.
 
 ### Déploiement
 
-```bash
-npm run build:deploy   # prisma generate && prisma migrate deploy && next build
+Application Next.js déployée par Coolify, base PostgreSQL en service Coolify sur
+le même projet.
+
+**Ordre de mise en place.** Déployer d'abord le service PostgreSQL, récupérer sa
+chaîne de connexion interne, puis créer l'application avec cette valeur en
+`DATABASE_URL`. L'inverse échoue : l'application ne trouverait pas sa base.
+
+> Vérifier que le mot de passe généré ne contient aucun caractère réservé
+> d'URL — `@`, `#`, `/`, `?`. Le cas échéant, l'encoder : `@` devient `%40`.
+> Le symptôme est trompeur, `P1000: Authentication failed`, qui fait chercher du
+> côté des identifiants alors que c'est l'URL qui est mal découpée.
+
+**Build command :**
+
+```
+npx prisma generate && npx prisma migrate deploy && next build
 ```
 
-PM2 :
+Les migrations tournent pendant le build, la base étant déjà déployée et
+joignable sur le réseau du projet. `migrate deploy` est idempotent : relancer un
+déploiement échoué est sans risque.
 
-```bash
-pm2 start npm --name uptober-crash -- run start
-pm2 save && pm2 startup
-```
+**Variables de build.** Cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et
+`NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en nommant les deux
+variables — bruyant, mais bloquant.
 
-Nginx en proxy inverse, avec certificat TLS via certbot :
+Corollaire durable : ces deux valeurs sont **compilées dans le bundle**.
+En changer une impose un *Redeploy*, pas un simple *Restart*. Les autres
+variables — `DATABASE_URL`, `SOLANA_RPC_URL`, `SALE_PAUSED`,
+`TRUSTED_PROXY_HOPS`, `ALERT_WEBHOOK_URL` — sont lues au démarrage : un
+redémarrage suffit.
 
-```nginx
-server {
-  server_name privatesale.uotobercrash.com;
+**Proxy.** Coolify place Traefik en frontal et gère le certificat TLS. Traefik
+*ajoute* l'IP réelle à `X-Forwarded-For` sans effacer ce que le client a envoyé,
+d'où `TRUSTED_PROXY_HOPS=1` : voir la section dédiée plus haut. Aucune
+configuration de proxy à écrire à la main.
 
-  location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host              $host;
-    proxy_set_header X-Real-IP         $remote_addr;
-    # Réécrit, jamais concaténé : la limitation de débit s'appuie sur cet
-    # en-tête, et celui du client ne doit pas pouvoir la contourner.
-    proxy_set_header X-Forwarded-For   $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-}
-```
-
-> ⚠️ La ligne `X-Forwarded-For` est un point de sécurité, pas une formalité.
-> Si le proxy laisse passer l'en-tête envoyé par le client, la limite de dix
-> requêtes par minute se contourne en une ligne de `curl`.
+**Healthcheck.** Aucune route de santé dédiée n'est implémentée à ce jour :
+Coolify se contente donc de vérifier que le port répond. Un conteneur dont la
+base est injoignable passerait pour sain, et le trafic y serait basculé. Si
+cette lacune devient gênante, ajouter un `GET /api/health` qui exécute une
+requête triviale sur la base et rend `503` en cas d'échec, puis le déclarer dans
+**Healthcheck**.
 
 ## Commandes
 
@@ -190,7 +245,7 @@ server {
 | --- | --- |
 | `npm run dev` | serveur de développement |
 | `npm run build` | compilation de production |
-| `npm run build:deploy` | migrations puis compilation |
+| `npm run build:deploy` | migrations puis compilation (équivalent local de la *Build command* Coolify) |
 | `npm run start` | serveur de production |
 | `npm run lint` | ESLint (CLI ; `next lint` n'existe plus) |
 | `npm run typecheck` | `tsc --noEmit` |
