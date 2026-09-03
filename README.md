@@ -11,7 +11,7 @@ trésorerie.
 Pour la mise en production, voir [Déploiement](#déploiement) — l'application est
 déployée par Coolify, cette section décrit une installation sur machine.
 
-Node.js 20.9 minimum, PostgreSQL, et un endpoint RPC Solana dédié.
+Node.js **20.12** minimum — `process.loadEnvFile()` l'exige —, PostgreSQL, et un endpoint RPC Solana dédié. La version de build est épinglée par `.node-version` et le champ `engines` de `package.json`.
 
 ```bash
 npm install
@@ -206,6 +206,10 @@ chaîne de connexion interne, puis créer l'application avec cette valeur en
 > d'URL — `@`, `#`, `/`, `?`. Le cas échéant, l'encoder : `@` devient `%40`.
 > Le symptôme est trompeur, `P1000: Authentication failed`, qui fait chercher du
 > côté des identifiants alors que c'est l'URL qui est mal découpée.
+
+**Build pack :** Railpack, le défaut de Coolify. Le choix importe peu, la
+version de Node étant épinglée par `.node-version` et `engines` — que Railpack
+lit tous deux. Avec Nixpacks il faudrait passer par `NIXPACKS_NODE_VERSION`.
 
 **Build command :**
 

@@ -106,7 +106,11 @@ Détails et pièges :
 
 - **Next.js 16 est l'Active LTS.** Next.js 15 est en Maintenance LTS avec fin de
   support au 21 octobre 2026 : ne démarre pas dessus.
-- **Node.js 20.9 minimum**, TypeScript 5.1 minimum. Vérifie `node -v` avant tout.
+- **Node.js 20.12 minimum**, TypeScript 5.1 minimum. Vérifie `node -v` avant tout.
+  Le plancher n'est pas 20.9 : `prisma.config.ts` et `scripts/load-env.ts`
+  appellent `process.loadEnvFile()`, arrivée en 20.12. Sous cette version, le
+  déploiement échoue sur un `process.loadEnvFile is not a function` qui ne dit
+  rien de sa vraie cause.
 - **Turbopack est le défaut** dans Next 16. Le drapeau `--turbopack` est inutile.
 - **`next lint` n'existe plus.** Utilise l'ESLint CLI directement. `next build`
   ne lance plus le lint : c'est une étape séparée.
@@ -240,7 +244,7 @@ Un projet vide qui compile.
 
 ## Actions
 
-1. Vérifier `node -v` ≥ 20.9. Sinon, s'arrêter et me le signaler.
+1. Vérifier `node -v` ≥ 20.12. Sinon, s'arrêter et me le signaler.
 2. `npx create-next-app@latest` : TypeScript oui, Tailwind oui, App Router oui, `src/` **non**, alias d'import `@/*` oui. Vérifier que `next` installé est bien en 16.x.
 3. **Mettre en place la documentation d'agent** : le drapeau `--agents-md` de `create-next-app` s'en charge nativement, le codemod n'est plus nécessaire. Cela crée un `AGENTS.md` pointant vers `node_modules/next/dist/docs/`, c'est-à-dire la documentation de la version exactement installée. Lis-la avant d'écrire du code Next.
 4. Supprimer tout le contenu de démonstration : le `page.tsx` par défaut, les SVG de `/public`, le CSS d'exemple dans `globals.css`.
@@ -248,8 +252,9 @@ Un projet vide qui compile.
 6. Initialiser shadcn (`npx shadcn@latest init`) et ajouter uniquement les six composants listés.
 7. `tsconfig.json` : `"strict": true`, `"noUncheckedIndexedAccess": true`, et `"target": "ES2022"`. `create-next-app` écrit `ES2017`, sous lequel TypeScript **interdit les littéraux `BigInt`** — soit tout le socle des montants.
 8. **ESLint en Flat Config** : créer `eslint.config.mjs` important `@next/eslint-plugin-next` directement, plus `typescript-eslint` pour le parsing. **Ne pas utiliser `eslint-config-next`** : il embarque un `eslint-plugin-react` incompatible avec ESLint 10 et fait planter le lint au démarrage. Ne crée pas de `.eslintrc*`. Ne mets pas de clé `eslint` dans `next.config.ts` : l'option a été supprimée.
-9. Créer `.env.example` et `.gitignore` (vérifier que `.env*` y figure).
-10. Scripts `package.json` :
+9. Créer `.env.example` et `.gitignore` (vérifier que `.env*` y figure, **et ajouter `!.env.example`** — sans quoi le modèle lui-même serait ignoré et ne partirait jamais dans le dépôt).
+10. **Épingler la version de Node** : champ `engines` dans `package.json` et fichier `.node-version`. Sans cela, le constructeur d'images choisit tout seul, et rien ne garantit qu'il retienne une version ≥ 20.12.
+11. Scripts `package.json` :
 
 ```json
 "dev": "next dev",
@@ -849,6 +854,7 @@ Mettre en ligne sur un serveur géré par **Coolify**, avec de quoi diagnostique
 
    - déployer d'abord le **service PostgreSQL**, récupérer sa chaîne de connexion interne ; l'inverse échoue, l'application ne trouverait pas sa base ;
    - vérifier que le mot de passe généré ne contient aucun caractère réservé d'URL — `@` devient `%40`. Le symptôme est trompeur : `P1000: Authentication failed` fait chercher du côté des identifiants alors que c'est l'URL qui est mal découpée ;
+   - *Build pack* : **Railpack**, le défaut de Coolify et son successeur maintenu de Nixpacks — images plus petites, cache de couches plus fin. Le choix importe peu dès lors que la version de Node est épinglée par `engines` et `.node-version`, que Railpack lit tous deux ; avec Nixpacks il faudrait la variable `NIXPACKS_NODE_VERSION` ;
    - *Build command* : `npx prisma generate && npx prisma migrate deploy && next build`. Les migrations tournent pendant le build, la base étant déjà déployée et joignable sur le réseau du projet. `migrate deploy` étant idempotent, relancer un déploiement échoué est sans risque ;
    - cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et `NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en les nommant — bruyant, mais bloquant. Corollaire durable : ces deux valeurs sont gravées dans le bundle, en changer une impose un *Redeploy* et non un simple *Restart* ;
    - Traefik et le certificat TLS sont gérés par Coolify, aucune configuration de proxy à écrire. Mais **Traefik *ajoute* l'IP réelle à `X-Forwarded-For` sans effacer ce que le client a envoyé** : lire le premier segment revient à lire ce que l'attaquant a bien voulu écrire. D'où `TRUSTED_PROXY_HOPS=1`, qui fait lire en partant de la fin. Sans cela, la limitation de débit se contourne en une ligne de `curl`.
