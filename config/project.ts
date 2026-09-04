@@ -19,8 +19,8 @@ export const PROJECT = {
 const TOKEN_UNIT = 10n ** BigInt(PROJECT.tokenDecimals);
 
 export const SALE = {
-  /** 1 SOL = 100 UP, exprimé en unités de base de token. */
-  tokensPerSol: 100n * TOKEN_UNIT,
+  /** 1 SOL = 10 UP, exprimé en unités de base de token. */
+  tokensPerSol: 10n * TOKEN_UNIT,
   /** Achat minimum : 0,5 SOL. */
   minLamports: 500_000_000n,
   /** Aucun plafond d'achat sur ce projet. */
