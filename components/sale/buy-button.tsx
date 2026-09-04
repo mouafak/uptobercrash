@@ -80,8 +80,14 @@ async function waitForConfirmation(
 
 export default function BuyButton({ paused = false }: { paused?: boolean }) {
   const { primaryWallet } = useDynamicContext();
-  const { lamports, tokenAmount, inputError, affiliateCode, refreshBalance } =
-    useSale();
+  const {
+    lamports,
+    tokenAmount,
+    inputError,
+    affiliateCode,
+    refreshBalance,
+    setSolInput,
+  } = useSale();
 
   const [step, setStep] = useState<Step>('idle');
   const [saleOpen, setSaleOpen] = useState(true);
@@ -195,6 +201,9 @@ export default function BuyButton({ paused = false }: { paused?: boolean }) {
     toast.success(
       `Purchase confirmed — ${formatTokens(tokenAmount)} ${PROJECT.tokenSymbol}`,
     );
+    // Le montant a été payé : le laisser dans le champ inviterait à recommencer.
+    // Vidé plutôt que mis à « 0 », pour retrouver le libellé indicatif.
+    setSolInput('');
     refreshBalance();
   }
 

@@ -12,6 +12,13 @@ import { PROJECT } from '@/config/project';
  * fichiers dans `public/` et ces deux imports, rien d'autre.
  */
 
+/**
+ * Chemin de la pastille, exposé pour les usages qui ne peuvent pas passer par un
+ * composant — le favicon des métadonnées, notamment. Il reste défini ici : la
+ * marque ne se change toujours qu'en remplaçant les fichiers de `public/`.
+ */
+export const brandMarkSrc: string = logoMark.src;
+
 type Props = {
   /** `mark` : la pastille carrée. `full` : le logo avec le texte. */
   variant?: 'mark' | 'full';

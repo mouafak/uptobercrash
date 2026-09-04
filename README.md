@@ -150,6 +150,11 @@ Toute l'identité visuelle tient dans trois endroits.
    deux imports. Le logo Solana vit à part, dans
    `components/shared/solana-mark.tsx`.
 
+   Le **favicon** suit automatiquement : `app/layout.tsx` le prend de
+   `brandMarkSrc`, exporté par ce même fichier. Il n'y a donc pas de copie de
+   l'image à maintenir en parallèle, et l'URL servie est hachée par Next, donc
+   invalidée à chaque changement de logo.
+
 Les polices sont dans `app/fonts.ts`, les fichiers `.woff2` dans `app/fonts/` —
 volontairement pas dans `public/`, pour que `next/font/local` les hache et les
 préchage.
@@ -230,22 +235,42 @@ propriétés : les nouvelles migrations sont présentes, la CLI `prisma` l'est
 aussi — c'est une dépendance de développement, absente de l'image d'exécution —,
 et un échec interrompt le déploiement **avant** toute mise en ligne.
 
-**Build command :** `npm run build:deploy`
+**Laisser les champs *Build command* et *Start command* vides.** Railpack
+exécute les scripts `build` et `start` de `package.json` : la procédure de
+déploiement vit ainsi dans le dépôt, pas dans une interface.
 
-Soit `prisma generate && prisma migrate deploy && next build`. Les migrations
-tournent pendant le build, la base étant déjà déployée et joignable sur le
-réseau du projet. `migrate deploy` est idempotent : relancer un déploiement
-échoué est sans risque.
+```json
+"build": "prisma generate && next build",
+"start": "prisma migrate deploy && next start"
+```
 
-> Railpack exécute par défaut le script `build`, qui ne migre pas. Surcharger la
-> *Build command* peut, selon la version de Coolify, réclamer un `railpack.json`.
-> Le cas échéant, remplacer l'étape `build` dans ce fichier plutôt que d'y
-> ajouter des commandes : l'opérateur `"..."` de Railpack les *ajoute après* les
-> commandes générées, et `prisma generate` s'exécuterait alors après
-> `next build`, trop tard.
+**Les migrations ne peuvent pas tourner pendant le build.** Le conteneur de
+build n'est pas attaché au réseau Docker du projet : le nom d'hôte interne de la
+base n'y résout pas, et `prisma migrate deploy` échoue sur
 
-**Start command :** laisser vide. Railpack lit le script `start`, soit
-`next start`.
+```
+P1001: Can't reach database server at `<hôte interne>:5432`
+```
+
+Le nom d'hôte est pourtant correct et la base en marche — c'est le demandeur qui
+n'est pas sur le bon réseau. Aucun réglage ne rattache le conteneur de build ;
+l'option *Connect To Predefined Network*, côté application, ne concerne que le
+conteneur d'exécution, qui lui y est déjà.
+
+Les migrations tournent donc **au démarrage du conteneur**, où la base est
+joignable. C'est aussi le meilleur moment : si une migration échoue, le
+conteneur s'arrête avant d'avoir servi la moindre requête et le déploiement est
+marqué en échec. `migrate deploy` étant idempotent, chaque redémarrage la
+revérifie sans risque.
+
+> Ce montage suppose que la CLI `prisma`, déclarée en `devDependencies`, soit
+> présente dans l'image d'exécution. C'est le cas avec Railpack, vérifié en
+> production. Si un jour l'image élague les dépendances de développement — la
+> variable `RAILPACK_NODE_PRUNE_CMD` existe — il faudra déplacer `prisma` en
+> `dependencies`.
+
+`build:deploy` reste utilisable pour un déploiement manuel hors Coolify, là où
+la base est joignable depuis la machine qui construit.
 
 **Variables de build.** Cocher **Buildtime** sur `NEXT_PUBLIC_DYNAMIC_ENV_ID` et
 `NEXT_PUBLIC_TREASURY_ADDRESS`. Sans cela le build échoue en nommant les deux

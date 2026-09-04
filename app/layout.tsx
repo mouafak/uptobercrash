@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { brandMarkSrc } from '@/components/shared/brand-logo';
 import { Toaster } from '@/components/ui/sonner';
 import { PROJECT } from '@/config/project';
 import Providers from '@/lib/providers';
@@ -20,6 +21,11 @@ export const metadata: Metadata = {
     url: PROJECT.appUrl,
     siteName: PROJECT.name,
     type: 'website',
+  },
+  icons: {
+    icon: brandMarkSrc,
+    shortcut: brandMarkSrc,
+    apple: brandMarkSrc,
   },
   twitter: {
     card: 'summary_large_image',
