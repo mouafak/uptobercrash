@@ -46,6 +46,10 @@
   --card: #040612;
   --foreground: #ffffff;
 
+  /* Fond de page. Seul chemin d'image du projet hors des composants de logo ;
+     il vit ici parce que c'est un élément de thème, pas de contenu. */
+  --background-image: url('/bg-down.svg');
+
   /* --- Dérivées des précédentes. --- */
   --card-foreground: #f4f6fa;
   --accent-foreground: var(--card);
@@ -72,7 +76,15 @@
 
 @layer base {
   body {
-    background-color: var(--background);
+    /* La couleur reste sous l'image : elle couvre le temps du chargement, et
+       au-delà si la page dépasse la hauteur du dégradé. Le bas du dégradé
+       valant --card, c'est lui qui prolonge le mieux. */
+    background-color: var(--card);
+    background-image: var(--background-image);
+    background-repeat: no-repeat;
+    background-position: center top;
+    background-size: cover;
+    background-attachment: fixed;
     color: var(--foreground);
     font-family: var(--font-sans), system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
